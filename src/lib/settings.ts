@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
 import { hash } from "bcryptjs";
+import { cache } from "react";
 
 export interface AppSettings {
   shopName: string;
@@ -61,7 +62,7 @@ export async function getSettingsMap(): Promise<Record<string, string>> {
   return map;
 }
 
-export async function getSettings(): Promise<AppSettings> {
+export const getSettings = cache(async function getSettings(): Promise<AppSettings> {
   const map = await getSettingsMap();
   return {
     shopName: map.shopName || DEFAULTS.shopName,
@@ -78,7 +79,7 @@ export async function getSettings(): Promise<AppSettings> {
     googleServiceAccountJson: map.googleServiceAccountJson || "",
     lastSyncAt: map.lastSyncAt || "",
   };
-}
+});
 
 export async function setSetting(key: string, value: string): Promise<void> {
   await prisma.setting.upsert({

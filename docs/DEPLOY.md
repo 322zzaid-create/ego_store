@@ -14,13 +14,15 @@
    - **كلمة مرور قاعدة البيانات**: احفظها جيدًا (يُطلب لاسترجاع رابط الاتصال) — أو اختر المتولّدة.
    - **Region**: `Central EU (Frankfurt)`.
    - خطة **Free** (منطقة فرانكفورت متاحة مجانًا).
-3. من القائمة الجانبية: **Project Settings ← Database ← Connection string**:
-   - فعّل **Transaction pooler** (منفذ `6543` عبر PgBouncer — إلزامي مع Prisma serverless لتفادي `too_many_connections`).
-   - انسخ رابطًا بصيغة:
+3. في صفحة المشروع اضغط زر **Connect** أعلى الصفحة (وليس Settings): 
+   - اختر **Transaction pooler** (منفذ `6543` عبر Supavisor — إلزامي مع Prisma serverless لتفادي `too_many_connections`).
+   - انسخ رابطًا بصيغة (استبدل `[YOUR-PASSWORD]` بكلمة مرور القاعدة):
      ```
-     postgresql://postgres.PROJECT_REF:DB_PASSWORD@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1
+     postgresql://postgres.PROJECT_REF:DB_PASSWORD@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=5
      ```
-   - > انتبه للفروق الحاسمة في هذا الرابط: المستخدم هو `postgres.PROJECT_REF` (وليس `postgres`)، والعنوان `...pooler.supabase.com:6543`، وكلاهما (`pgbouncer=true&connection_limit=1`).
+   - > انتبه للفروق الحاسمة: المستخدم `postgres.PROJECT_REF` (وليس `postgres`)، والعنوان `...pooler.supabase.com:6543`.
+   - **قيمة `connection_limit`:** نستخدم **`5`** وليس `1`. `1` يسبب `P2024 (Timed out fetching a new connection)` عند أي تزامن (الصفحة تستدعي إعدادات من عدة مكوّنات + 3 كتالوجات متوازية). `5` آمنة لمتجرنا ولا تُرهق خطة Free.
+   - > فعلنا أيضًا داخل التطبيق: `getSettings` مكشوفة بـ React `cache()` ليُدمج الاستدعاءات المتوازية في نفس العرض.
 
 ### 🚨 RLS (الأهم في Supabase)
 Supabase تفعّل **Row Level Security** تلقائيًا على جداول `public` — وهذا **يحظر على Prisma كل قراءة/كتابة** حتى تحتفظ بصلاحياتيفعل. أنت لا تملك الجداول عبر `prisma db push`، لذا:
@@ -33,7 +35,7 @@ Supabase تفعّل **Row Level Security** تلقائيًا على جداول `p
   alter table public."Invoice"          disable row level security;
   alter table public."Setting"          disable row level security;
   ```
-  (الأسماء بعلامات تنصيص مزدوجة لأن Prisma يولّدها هكذا. إن لم توجد الجداول بعد: أنشئها أولًا بـ `db push` ثم نفّذ هذا السكرpts.)
+  (الأسماء بعلامات تنصيص مزدوجة لأن Prisma يولّدها هكذا. إن لم توجد الجداول بعد: أنشئها أولًا بـ `db push` ثم نفّذ هذا السكربت — أو نفّذه بـ `npx prisma db execute` كما في الخطوة 3/4.)
 - البديل الأنظف: وعوضًا عن تعطيل RLS، اربط بـ **جدول بحساب الخدمة/المالك** مباشرة عبر Transaction pooler — Prisma تتصل كمالك الجدول، وRLS لا تُطبَّق على المالك في Supabase بوضع `FORCE ROW LEVEL SECURITY` غير المعمّل. احتفظ بهذا كخطة سقوط.
 
 ## 2) تحويل المشروع إلى PostgreSQL (مرة واحدة قبل النشر)
@@ -43,15 +45,18 @@ Supabase تفعّل **Row Level Security** تلقائيًا على جداول `p
    ```
 2. عُدّل المتغيّر في `.env` محليًا (رابط Supabase من الخطوة 1):
    ```
-   DATABASE_URL="postgresql://postgres.PROJECT_REF:DB_PASSWORD@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1"
+   DATABASE_URL="postgresql://postgres.PROJECT_REF:DB_PASSWORD@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=5"
    ```
 3. ادفع قاعدة البيانات وأنشئ العميل:
    ```powershell
    npx prisma db push
    npx prisma generate
    ```
-4. نفّذ برنامج RLS أعلاه في SQL Editor (تعطيل RLS).
-5. فعّل MySQL/أو وظيفة AndRoid تعرّي على قاعدة Neon: راجع التوثيق أدناه.
+4. نفّذ سكربت RLS (تعطيل RLS للجداول الستة) — الملف الجاهز `scripts/disable-rls.sql`:
+   ```powershell
+   npx prisma db execute --file scripts\disable-rls.sql --schema prisma\schema.prisma
+   ```
+   (أو الصقه في Supabase SQL Editor ثم Run.)
 
 ## 3) الاطلاع/التطوير المحلي بعد التحويل
 السكربت يُعيدك لـ SQLite بنقرة:
@@ -72,7 +77,7 @@ Supabase تفعّل **Row Level Security** تلقائيًا على جداول `p
 ## 5) المتغيّرات في Vercel
 | المتغير | القيمة |
 |---|---|
-| `DATABASE_URL` | رابط Supabase **Transaction pooler** من الخطوة 1 (بـ `pgbouncer=true&connection_limit=1`) |
+| `DATABASE_URL` | رابط Supabase **Transaction pooler** من الخطوة 1 (بـ `pgbouncer=true&connection_limit=5`) |
 | `DATABASE_URL_UNPOOLED` | (يفضَّل) رابط Direct/Session pooler `:5432` بدون `?pgbouncer` — سيتصل Prisma بها لعمليات DDL لو احتجنا |
 | `ADMIN_PASSWORD` | كلمة مرور لوحة الأدمين |
 | `AUTH_SECRET` | سلسلة عشوائية 32+ حرفًا (ثابتة؛ تغييرها يطرد الجلسات) |
@@ -103,7 +108,7 @@ Vercel ← **Settings ← Domains** ← أضف نطاقك ووثّق DNS وحد�
 
 ## تحذيرات النشر الحاسمة
 - **لا تُرفع أي أسرار** (`.env` مستثنى بالمستودع) — كلها تُدخل في Vercel.
-- `DATABASE_URL` على Vercel **يجب** أن يكون عبر Transaction pooler — لا تنسَ `pgbouncer=true&connection_limit=1`.
+- `DATABASE_URL` على Vercel **يجب** أن يكون عبر Transaction pooler — ولا تنسَ `pgbouncer=true` و `connection_limit=5` (وليس `1`؛ انظر سبب `P2024` أعلاه).
 - بعد أول نشر، غيّر عناصر الإعدادات الافتراضية من `/admin/settings` (خصوصًا `ADMIN_PASSWORD` إن تُركت افتراضية).
-- إذا واجهتك `P1001`/`too many connections`: تأكد أنك على منفذ `6543` ونفس `connection_limit=1`.
+- إذا واجهتك `P1001`/`too many connections`: تأكد أنك على منفذ `6543` وأن الـ `connection_limit` مناسب (لا ترفعه فوق حد خطة Free المجاني بعنف؛ `5` تكفينا).
 - إن ظهرت `P2010` وقت النشر تعني أن RLS ما زالت مفعّلة — ارجع للخطوة 2.4 (تعلية الجداول).
