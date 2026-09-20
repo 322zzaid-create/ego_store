@@ -17,11 +17,16 @@ param(
 $ErrorActionPreference = "Stop"
 $schema = Join-Path $PSScriptRoot "..\prisma\schema.prisma"
 
+function Ensure-NoBom($path, $text) {
+  $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText($path, $text, $utf8NoBom)
+}
+
 $content = Get-Content -Raw -Path $schema
 if ($Target -eq "postgres") {
   $next = $content -replace 'provider = "sqlite"', 'provider = "postgresql"'
   if ($next -eq $content) { Write-Error "السكيمة ليست sqlite — راجعها يدويًا" }
-  Set-Content -Path $schema -Value $next -Encoding UTF8 -NoNewline
+  Ensure-NoBom $schema $next
   Write-Host "[OK] schema.prisma -> postgresql"
   Write-Host "الآن نفّذ بالترتيب (مع DATABASE_URL = رابط Supabase):"
   Write-Host "  npx prisma db push"
@@ -29,7 +34,7 @@ if ($Target -eq "postgres") {
 } else {
   $next = $content -replace 'provider = "postgresql"', 'provider = "sqlite"'
   if ($next -eq $content) { Write-Error "السكيمة ليست postgresql — راجعها يدويًا" }
-  Set-Content -Path $schema -Value $next -Encoding UTF8 -NoNewline
+  Ensure-NoBom $schema $next
   Write-Host "[OK] schema.prisma -> sqlite"
   Write-Host "تأكّد أن DATABASE_URL = file:./dev.db ثم نفّذ npx prisma generate"
 }
