@@ -1,13 +1,15 @@
-import { getSettings } from "@/lib/settings";
+﻿import { getSettings } from "@/lib/settings";
+
+export const dynamic = "force-dynamic";
 
 export default async function AboutPage() {
   const settings = await getSettings();
   return (
     <div className="mx-auto max-w-3xl px-4 py-12">
       <h1 className="text-3xl font-black">عن {settings.shopName}</h1>
-      <div className="mt-6 space-y-4 text-zinc-700 leading-relaxed">
+      <div className="mt-6 space-y-4 leading-relaxed text-zinc-700">
         <p>
-          {settings.shopName} متجر متخصص بالهوديز وتيشيرتات الأوفرسايز — قطع مطبوعة بخامات جيدة،
+          {settings.shopName} متجر متخصص بالهوديز والتيشيرتات الأوفرسايز — قطع مطبوعة بخامات جيدة،
           وخام للطباعة حسب ذوقك، وطباعة مخصصة لفكرتك أنت.
         </p>
         <p>

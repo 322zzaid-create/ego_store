@@ -4,6 +4,8 @@ import { getSettings } from "@/lib/settings";
 import { buildWhatsAppLink, buildCustomPrintMessage } from "@/lib/whatsapp";
 import { ProductCard } from "@/components/store/product-card";
 
+export const dynamic = "force-dynamic";
+
 export default async function HomePage() {
   const settings = await getSettings();
   const customPrintLink = buildWhatsAppLink(settings.whatsappNumber, buildCustomPrintMessage(settings));
