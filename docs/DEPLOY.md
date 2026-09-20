@@ -1,60 +1,97 @@
-# دليل النشر السحابي — متجر EGO (Vercel + Neon)
+# دليل النشر السحابي — متجر EGO (Vercel + Supabase)
 
-> الرابط الخارجي`DATABASE_URL` (من Neon) هو **متغيّر بيئة حقيقي** تدخله أنت من لوحة Neon ثم تُضيفه في Vercel.
-> كل المزامنات الأخرى (واتساب، شام كاش، Google Sheets، الشعار، كلمة المرور) تُملأ من لوحة `/admin/settings` بعد النشر ولا تحجب شيئًا وهي فارغة.
+> الخيار الوحيد المعتمد: **Supabase** (PostgreSQL) + **Vercel**. لا نستخدم Neon أبدًا.
+> المسار الكامل مبني على Prisma، لذا كل ما تفعله هنا يعمل مع أي مزوّد PostgreSQL آخر إن تغيّر رأيك يومًا — دون تعديل أي كود.
 
-## 0) التحضير المحلي (منفَّذ)
-- `npm run build` ينجح نظيفًا (فحص إلزامي قبل أي commit).
-- `postinstall = prisma generate` في `package.json`: يضمن أن يعمل الجذر CSS/Next و Prisma على Vercel (الـ node_modules لا يُرفع).
-- قاعدة البيانات المحلية SQLite **مستثناة** من Git (`.gitignore` يمنع `*.db`).
+## 0) أثنان من "أقرب منطقة لسوريا"
+عند إنشاء مشروع Supabase اختر المنطقة **فرانكفورت** (`eu-central-1` — أقرب وأفضلها توازنًا للشرق الأوسط؛ لا توجد منطقة أوسطية لدى Supabase حاليًا).
+بدائل مقبولة بترتيب القرب: بولندا `eu-central-2`، ثم لندن `eu-west-2`. **تجنّب** أمريكا/سنغافورة (بطء أعلى لزائرهم).
 
-## 1) قاعدة البيانات: Neon (Postgres) بدل SQLite
-1. أنشئ حسابًا مجانيًا في https://neon.tech وأنشئ مشروعًا جديدًا (منطقة `eu-central-1` مثلًا).
-2. انسخ `DATABASE_URL` بصيغة `postgresql://USER:PASSWORD@HOST/neondb?sslmode=require`.
-3. عدّل `prisma/schema.prisma` السطر الأول من `datasource`:
-   - `provider = "sqlite"` ← `provider = "postgresql"`
-4. ضع الرابط في المتغيّر المؤقت ثم نفّذ **مرة واحدة فقط من جهازك** (ينشئ الجداول على Neon):
-   ```bash
-   $env:DATABASE_URL="postgresql://...";   # رابط Neon الحقيقي
-   npx prisma db push          # أو: npx prisma migrate deploy
+## 1) قاعدة البيانات: Supabase
+1. أنشئ حسابًا في https://supabase.com (سجّل بـ GitHub أو بريدك).
+2. اضغط **New project**:
+   - الاسم: `ego-store`
+   - **كلمة مرور قاعدة البيانات**: احفظها جيدًا (يُطلب لاسترجاع رابط الاتصال) — أو اختر المتولّدة.
+   - **Region**: `Central EU (Frankfurt)`.
+   - خطة **Free** (منطقة فرانكفورت متاحة مجانًا).
+3. من القائمة الجانبية: **Project Settings ← Database ← Connection string**:
+   - فعّل **Transaction pooler** (منفذ `6543` عبر PgBouncer — إلزامي مع Prisma serverless لتفادي `too_many_connections`).
+   - انسخ رابطًا بصيغة:
+     ```
+     postgresql://postgres.PROJECT_REF:DB_PASSWORD@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1
+     ```
+   - > انتبه للفروق الحاسمة في هذا الرابط: المستخدم هو `postgres.PROJECT_REF` (وليس `postgres`)، والعنوان `...pooler.supabase.com:6543`، وكلاهما (`pgbouncer=true&connection_limit=1`).
+
+### 🚨 RLS (الأهم في Supabase)
+Supabase تفعّل **Row Level Security** تلقائيًا على جداول `public` — وهذا **يحظر على Prisma كل قراءة/كتابة** حتى تحتفظ بصلاحياتيفعل. أنت لا تملك الجداول عبر `prisma db push`، لذا:
+- **الخيار الموصى به (الأبسط والأضمن):** قبل الاستعلام عن الجداول في التطبيق، نفّذ داخل SQL Editor في Supabase:
+  ```sql
+  alter table public."Product"          disable row level security;
+  alter table public."Variant"          disable row level security;
+  alter table public."Order"            disable row level security;
+  alter table public."OrderItem"        disable row level security;
+  alter table public."Invoice"          disable row level security;
+  alter table public."Setting"          disable row level security;
+  ```
+  (الأسماء بعلامات تنصيص مزدوجة لأن Prisma يولّدها هكذا. إن لم توجد الجداول بعد: أنشئها أولًا بـ `db push` ثم نفّذ هذا السكرpts.)
+- البديل الأنظف: وعوضًا عن تعطيل RLS، اربط بـ **جدول بحساب الخدمة/المالك** مباشرة عبر Transaction pooler — Prisma تتصل كمالك الجدول، وRLS لا تُطبَّق على المالك في Supabase بوضع `FORCE ROW LEVEL SECURITY` غير المعمّل. احتفظ بهذا كخطة سقوط.
+
+## 2) تحويل المشروع إلى PostgreSQL (مرة واحدة قبل النشر)
+1. شغّل السكربت الجاهز (يبدّل `prisma/schema.prisma` من sqlite إلى postgresql):
+   ```powershell
+   .\scripts\switch-db.ps1 -Target postgres
+   ```
+2. عُدّل المتغيّر في `.env` محليًا (رابط Supabase من الخطوة 1):
+   ```
+   DATABASE_URL="postgresql://postgres.PROJECT_REF:DB_PASSWORD@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1"
+   ```
+3. ادفع قاعدة البيانات وأنشئ العميل:
+   ```powershell
+   npx prisma db push
    npx prisma generate
    ```
-   ملاحظة: البيئة المحلية تعمل بـ SQLite؛ لا تخلط — عند تبادل الرابط لا تكن فعّالًا، أعد الضبط يدويًا.
+4. نفّذ برنامج RLS أعلاه في SQL Editor (تعطيل RLS).
+5. فعّل MySQL/أو وظيفة AndRoid تعرّي على قاعدة Neon: راجع التوثيق أدناه.
 
-## 2) رفع الكود إلى GitHub ثم ربط Vercel
-1. أنشئ مستودعًا خاصًا أو عامًا في https://github.com/new باسم `ego-store`.
-2. اربط الرفع:
-   ```bash
+## 3) الاطلاع/التطوير المحلي بعد التحويل
+السكربت يُعيدك لـ SQLite بنقرة:
+```powershell
+.\scripts\switch-db.ps1 -Target sqlite
+```
+(ثم اجعل `DATABASE_URL="file:./dev.db"` محليًا). التطوير اليومي يبقى على SQLite السريعة؛ والنشر فقط على Supabase.
+
+## 4) الرفع إلى GitHub ثم Vercel
+1. أنشئ مستودعًا خاصًا في https://github.com/new (اختياري: عام ثم اجعله خاصًا لاحقًا).
+2. اربط وادفع:
+   ```powershell
    git remote add origin https://github.com/<YOU>/ego-store.git
    git push -u origin main
    ```
-3. في https://vercel.com/new استورد المستودع (Next.js يُكشَف تلقائيًا).
+3. في https://vercel.com: **Add New → Project** ← استورد المستودع.
 
-## 3) إعداد Vercel
-أضف هذه Variables من **Settings ← Environment Variables** (علامة Production:
-```
-DATABASE_URL=<رابط Neon من الخطوة 1>
-ADMIN_PASSWORD=<كلمة مرور اللوحة — تتجاوز الافتراضية>
-AUTH_SECRET=<سلسلة عشوائية طويلة 32+ — تبقى ثابتة؛ logout بعد تغييرها>
-APP_URL=https://<your-subdomain>.vercel.app
-GOOGLE_SERVICE_ACCOUNT_JSON=""        # تُترك فارغة حتى الربط من الإعدادات
-GOOGLE_SHEET_ID=""                    # تُترك فارغة
-BLOB_READ_WRITE_TOKEN=""              # تُترك فارغة (بتعطيل رفع الصور في بيئة الـ blob فقط)
-```
-ثم **Deploy** — بعد أول نشر افتح `/admin/login` وغيّر كلمة المرور من الإعدادات.
+## 5) المتغيّرات في Vercel
+| المتغير | القيمة |
+|---|---|
+| `DATABASE_URL` | رابط Supabase **Transaction pooler** من الخطوة 1 (بـ `pgbouncer=true&connection_limit=1`) |
+| `DATABASE_URL_UNPOOLED` | (يفضَّل) رابط Direct/Session pooler `:5432` بدون `?pgbouncer` — سيتصل Prisma بها لعمليات DDL لو احتجنا |
+| `ADMIN_PASSWORD` | كلمة مرور لوحة الأدمين |
+| `AUTH_SECRET` | سلسلة عشوائية 32+ حرفًا (ثابتة؛ تغييرها يطرد الجلسات) |
+| `APP_URL` | `https://<your-subdomain>.vercel.app` (أو نطاقك النهائي) |
 
-## 4) المجال (اختياري)
-من Vercel: **Settings ← Domains** أضِف نطاقك، ثم فعّل HTTPS، وحدّث `APP_URL` بمجال النطاق النهائي.
+ثم **Deploy**. بعد أول نجاح افتح `/admin/login` ودخل الإعدادات لربط الواتساب/شام كاش/Google Sheets.
 
-## 5) ربط Google Sheets (اختياري، كل شيء يعمل بدونه)
-1. أنشئ جدول Google جديدًا. من Google Cloud Console أنشئ **Service Account**، حمّل مفتاح JSON.
-2. من لوحة المتجر: `/admin/settings` ← الصق JSON الخدمة + معرف الجدول/رابطه.
-3. شارك الجدول مع بريد الـ Service Account بصلاحية **محرر**.
-4. من `/admin/reports` اضغط "زامن الآن" — تُبنى التبويبات الأربعة (الجرد/المبيعات/الفواتير/الأرباح).
-5. بدون الربط، تتوقف المزامنة بصمت وكل شيء آخر يعمل.
+## 6) المجال المخصص (اختياري)
+Vercel ← **Settings ← Domains** ← أضف نطاقك ووثّق DNS وحدّث `APP_URL`.
 
-## 6) المزامنة اليومية التلقائية (اختياري — خطة Vercel Pro)
-أضف `vercel.json` مع cron يومي يستدعي `GET /api/sheets/sync` (يحتاج `AUTH_SECRET` نفسه في الـ request):
+## 7) مزامنة Google Sheets (اختيارية — تعمل بدونها)
+1. أنشئ Spreadsheet في Google واسمها مثل `EGO`.
+2. من Google Cloud Console أنشئ **Service Account** وحمّل مفتاح JSON.
+3. لوحة التحكم: `/admin/settings` ← الصق JSON الـ Service Account + معرّف الجدول.
+4. شارك الجدول مع بريد الـ Service Account (سماح محرر).
+5. زر "زامن الآن" في `/admin/reports`. دون ربط، المزامنة تتوقف بصمت ويظل المتجر يعمل.
+
+## 8) مزامنة يومية تلقائية (اختفت خطوة — اختيارية)
+`vercel.json` مع cron:
 ```json
 {
   "crons": [
@@ -62,8 +99,11 @@ BLOB_READ_WRITE_TOKEN=""              # تُترك فارغة (بتعطيل رف
   ]
 }
 ```
-الاستدعاء يتم داخل حزمة التطبيق ولا يرسل أسرارًا في الرابط؛ حمّل الحماية بفحص `Authorization` في `route.ts` (موجود). في الخطة المجانية استخدم cron-job.org يضرب الرابط مع `Authorization: Bearer <AUTH_SECRET>`.
+(خطة Pro فقط؛ وإلا استخدم cron-job.org وتأكد من فحص `Authorization: Bearer <AUTH_SECRET>` في نهاية المسار.)
 
-## ملاحظات الحفظ والقاعدة
-- لا تُرفع أسرار في واجهة عامة؛ كل ما يُكتب في الكود هو روابط إعداد تُملأ من متغيّرات البيئة الحقيقية في Vercel أو لوحة الإعدادات.
-- لا تحذف `prisma/generate` من postinstall.
+## تحذيرات النشر الحاسمة
+- **لا تُرفع أي أسرار** (`.env` مستثنى بالمستودع) — كلها تُدخل في Vercel.
+- `DATABASE_URL` على Vercel **يجب** أن يكون عبر Transaction pooler — لا تنسَ `pgbouncer=true&connection_limit=1`.
+- بعد أول نشر، غيّر عناصر الإعدادات الافتراضية من `/admin/settings` (خصوصًا `ADMIN_PASSWORD` إن تُركت افتراضية).
+- إذا واجهتك `P1001`/`too many connections`: تأكد أنك على منفذ `6543` ونفس `connection_limit=1`.
+- إن ظهرت `P2010` وقت النشر تعني أن RLS ما زالت مفعّلة — ارجع للخطوة 2.4 (تعلية الجداول).
