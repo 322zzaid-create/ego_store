@@ -1,31 +1,69 @@
-# دليل النشر والربط الخارجي
+# دليل النشر السحابي — متجر EGO (Vercel + Neon)
 
-## 1) قاعدة البيانات: من SQLite إلى PostgreSQL (Neon)
-1. أنشئ مشروعًا مجانيًا في https://neon.tech وانسخ `DATABASE_URL`.
-2. عدّل `prisma/schema.prisma`: `provider = "sqlite"` ← `provider = "postgresql"`.
-3. عدّل `.env`: `DATABASE_URL=postgresql://...`
-4. نفّذ:
-```bash
-npx prisma db push
-npx prisma generate
+> الرابط الخارجي`DATABASE_URL` (من Neon) هو **متغيّر بيئة حقيقي** تدخله أنت من لوحة Neon ثم تُضيفه في Vercel.
+> كل المزامنات الأخرى (واتساب، شام كاش، Google Sheets، الشعار، كلمة المرور) تُملأ من لوحة `/admin/settings` بعد النشر ولا تحجب شيئًا وهي فارغة.
+
+## 0) التحضير المحلي (منفَّذ)
+- `npm run build` ينجح نظيفًا (فحص إلزامي قبل أي commit).
+- `postinstall = prisma generate` في `package.json`: يضمن أن يعمل الجذر CSS/Next و Prisma على Vercel (الـ node_modules لا يُرفع).
+- قاعدة البيانات المحلية SQLite **مستثناة** من Git (`.gitignore` يمنع `*.db`).
+
+## 1) قاعدة البيانات: Neon (Postgres) بدل SQLite
+1. أنشئ حسابًا مجانيًا في https://neon.tech وأنشئ مشروعًا جديدًا (منطقة `eu-central-1` مثلًا).
+2. انسخ `DATABASE_URL` بصيغة `postgresql://USER:PASSWORD@HOST/neondb?sslmode=require`.
+3. عدّل `prisma/schema.prisma` السطر الأول من `datasource`:
+   - `provider = "sqlite"` ← `provider = "postgresql"`
+4. ضع الرابط في المتغيّر المؤقت ثم نفّذ **مرة واحدة فقط من جهازك** (ينشئ الجداول على Neon):
+   ```bash
+   $env:DATABASE_URL="postgresql://...";   # رابط Neon الحقيقي
+   npx prisma db push          # أو: npx prisma migrate deploy
+   npx prisma generate
+   ```
+   ملاحظة: البيئة المحلية تعمل بـ SQLite؛ لا تخلط — عند تبادل الرابط لا تكن فعّالًا، أعد الضبط يدويًا.
+
+## 2) رفع الكود إلى GitHub ثم ربط Vercel
+1. أنشئ مستودعًا خاصًا أو عامًا في https://github.com/new باسم `ego-store`.
+2. اربط الرفع:
+   ```bash
+   git remote add origin https://github.com/<YOU>/ego-store.git
+   git push -u origin main
+   ```
+3. في https://vercel.com/new استورد المستودع (Next.js يُكشَف تلقائيًا).
+
+## 3) إعداد Vercel
+أضف هذه Variables من **Settings ← Environment Variables** (علامة Production:
 ```
-5. البيانات المحلية (SQLite) لا تنتقل تلقائيًا — تُعاد إدخال بيانات التشغيل أو يصدر/يستورد من الجدول.
+DATABASE_URL=<رابط Neon من الخطوة 1>
+ADMIN_PASSWORD=<كلمة مرور اللوحة — تتجاوز الافتراضية>
+AUTH_SECRET=<سلسلة عشوائية طويلة 32+ — تبقى ثابتة؛ logout بعد تغييرها>
+APP_URL=https://<your-subdomain>.vercel.app
+GOOGLE_SERVICE_ACCOUNT_JSON=""        # تُترك فارغة حتى الربط من الإعدادات
+GOOGLE_SHEET_ID=""                    # تُترك فارغة
+BLOB_READ_WRITE_TOKEN=""              # تُترك فارغة (بتعطيل رفع الصور في بيئة الـ blob فقط)
+```
+ثم **Deploy** — بعد أول نشر افتح `/admin/login` وغيّر كلمة المرور من الإعدادات.
 
-## 2) النشر على Vercel
-1. ارفع المشروع إلى GitHub ثم استورده في https://vercel.com.
-2. أضف المتغيرات (Variables):
-   - `DATABASE_URL` (من Neon)
-   - `ADMIN_PASSWORD`
-   - `AUTH_SECRET`
-   - `APP_URL` = رابط الموقع
-3. بعد أول نشر: افتح `/admin` وغيّر كلمة المرور من الإعدادات.
+## 4) المجال (اختياري)
+من Vercel: **Settings ← Domains** أضِف نطاقك، ثم فعّل HTTPS، وحدّث `APP_URL` بمجال النطاق النهائي.
 
-## 3) ربط Google Sheets
-1. أنشئ تابلوه Google جديد (Spreadsheet) باسم "EGO".
-2. من Google Cloud Console أنشئ Service Account، حمّل مفتاح JSON، الصقه في لوحة التحكم ← الإعدادات ← إعدادات الشيتس، وأدخل رابط/معرف التابلوه.
-3. شارك التابلوه مع البريد الإلكتروني الخاص بالـ Service Account بصلاحية **محرر**.
-4. اضغط "زامن الآن" من صفحة التقارير — تُبنى التبويبات الأربعة (الجرد/المبيعات/الفواتير/الأرباح) تلقائيًا.
-5. بدون هذه الخطوة، المزامنة تتوقف بصمت وكل شيء آخر يعمل.
+## 5) ربط Google Sheets (اختياري، كل شيء يعمل بدونه)
+1. أنشئ جدول Google جديدًا. من Google Cloud Console أنشئ **Service Account**، حمّل مفتاح JSON.
+2. من لوحة المتجر: `/admin/settings` ← الصق JSON الخدمة + معرف الجدول/رابطه.
+3. شارك الجدول مع بريد الـ Service Account بصلاحية **محرر**.
+4. من `/admin/reports` اضغط "زامن الآن" — تُبنى التبويبات الأربعة (الجرد/المبيعات/الفواتير/الأرباح).
+5. بدون الربط، تتوقف المزامنة بصمت وكل شيء آخر يعمل.
 
-## 4) الجدولة اليومية (اختياري)
-الدوال الموسومة بالكامل تشغّل مزامنة كاملة عبر `GET /api/sheets/sync`. عند تشغيل Vercel Pro أضف `crons` في `vercel.json` (خطة مجانية: استخدم cron-job.org لضرب الرابط يوميًا مع إضافة هيدر `Authorization: Bearer <SECRET>`).
+## 6) المزامنة اليومية التلقائية (اختياري — خطة Vercel Pro)
+أضف `vercel.json` مع cron يومي يستدعي `GET /api/sheets/sync` (يحتاج `AUTH_SECRET` نفسه في الـ request):
+```json
+{
+  "crons": [
+    { "path": "/api/sheets/sync", "schedule": "0 6 * * *" }
+  ]
+}
+```
+الاستدعاء يتم داخل حزمة التطبيق ولا يرسل أسرارًا في الرابط؛ حمّل الحماية بفحص `Authorization` في `route.ts` (موجود). في الخطة المجانية استخدم cron-job.org يضرب الرابط مع `Authorization: Bearer <AUTH_SECRET>`.
+
+## ملاحظات الحفظ والقاعدة
+- لا تُرفع أسرار في واجهة عامة؛ كل ما يُكتب في الكود هو روابط إعداد تُملأ من متغيّرات البيئة الحقيقية في Vercel أو لوحة الإعدادات.
+- لا تحذف `prisma/generate` من postinstall.

@@ -2,7 +2,7 @@
 
 > تحديث هذا الملف إلزامي في **نهاية كل مهمة**. عند استئناف جلسة جديدة: اقرأ `docs/PLAN.md` ثم هذا الملف ثم `AGENTS.md`.
 
-## الحالة العامة: المرحلة 1 (الأساس والنشر) — قيد التنفيذ
+## الحالة العامة: المرحلة 2 (النشر السحابي: Vercel + Neon) — قيد التنفيذ
 
 ## خطوات الاستئناف
 اقرأ `docs/PLAN.md` + `docs/PROGRESS.md` + `AGENTS.md` ثم تابع من آخر مهمة غير مكتملة أدناه.
@@ -17,14 +17,19 @@
 - [x] 1.7 الطلبات: نموذج سريع + دورة الحالات + تأكيد/خصم/إلغاء + فاتورة قابلة للطباعة
 - [x] 1.8 الصفحات العامة (رئيسية/عن/دفع/شحن)
 - [x] 1.9 التقارير + ربط Google Sheets (فارغ لحين ربطه لاحقًا)
-- [ ] 1.10 تجربة شاملة + `npm run build` ناجح + commit
+- [x] 1.10 تجربة شاملة + `npm run build` ناجح + commit
+- [ ] 2.1 إنشاء قاعدة Neon + الحصول على `DATABASE_URL` (خطوة حسابية خارجية)
+- [ ] 2.2 التحويل إلى PostgreSQL: `prisma/schema.prisma provider=sqlite→postgresql` + `db push` على Neon + `generate`
+- [ ] 2.3 رفع الكود إلى GitHub (مستودع بعيد) + Push
+- [ ] 2.4 إنشاء مشروع Vercel واستيراد المستودع + إدخال المتغيّرات (DATABASE_URL/ADMIN_PASSWORD/AUTH_SECRET/APP_URL) + أول نشر
+- [ ] 2.5 تعيين نطاق مخصص (اختياري) + تكوين cron اليومي للمزامنة (اختياري)
 
-## ملاحظات الجلسة الأخيرة (تم تنفيذها)
-- بنية كاملة: schema (6 جداول)، مكتبات `src/lib/` (inventory, settings, auth, whatsapp, order-keys, aggregations, labels, format, catalog, sheets/client+sync)، صفحات المتجر `(store)/`، لوحة أدمين `admin/(panel)/` مع فواتير/تقارير/إعدادات.
-- `src/lib/slots.ts` لا وجود له؛ استخدمنا `src/lib/aggregations.ts` للقياسات الخاصة بـ Sheets.
-- تمت إزالة عمودين من عالم Prisma لتجنّب الغموض: `Variant` لم يعد يملك `basePrice` و `costPrice`؛ ويبقى كلاهما في `Product`.
-- فاتورة واحدة تلقائية لكل طلب (إنشاؤها داخل `createOrderRecord`)؛ ولها `amount` مستقل تُحدَّث عند تأكيد الطلب (من `totalAmount` + `deliveryFee`).
-- روابط Google Sheets تُترك فارغة وتُملأ من لوحة الإعدادات لتجنّب اختناق/تعارض عند النشر.
+## الإنجاز المحلي الجاهز للنشر (تم تنفيذه ولا يحتاج حسابات)
+- **postinstall**: أُضيف `prisma generate` تلقائيًا في `postinstall` (سطر في `package.json`) — هكذا ينشئ Vercel العميل Prisma أثناء `npm install` ولن يفشل النشر بسبب فقدان العميل أو عدم توازي قاعدة النشر.
+- **stars و vercel.json**: (انظر docs/DEPLOY.md لملء data من حسابك فعليًا).
+- الصفحات المولدة أيام الـ static أُجبرت على `force-dynamic` (المتجر + كل صفحات admin) — لا اتصال Prisma في وقت البناء (أهم إصلاح لمنع فشل النشر مع Neon).
+- `.env` محلي لا يُرفع (مُستثنى في .gitignore)؛ الربط يتم عبر إعدادات Vercel.
+- تفاصيل الخطوات الحسابية كاملة في `docs/DEPLOY.md`.
 
 ## ملاحظات للمستقبل
 - اختبارات Vitest: `npx vitest` تعمل عبر `vitest.config.ts` وملفات `src/lib/**/__tests__/*.test.ts`.
