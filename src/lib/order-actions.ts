@@ -195,8 +195,8 @@ async function confirmOrderAtomic(orderId: string, invoiceNo: string): Promise<v
         },
         {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-          maxWait: 5000,
-          timeout: 15000,
+          maxWait: 3000,
+          timeout: 8000,
         }
       );
       return;

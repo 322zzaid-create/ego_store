@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 export interface NavItem {
   href: string;
@@ -30,10 +30,6 @@ export function StoreNav({
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    setOpen(false);
-  }, [pathname]);
 
   return (
     <>
@@ -70,6 +66,7 @@ export function StoreNav({
               <Link
                 key={item.href}
                 href={item.href}
+                onClick={() => setOpen(false)}
                 className={`rounded-2xl px-4 py-3 text-base font-bold transition-colors ${
                   isActive(pathname, item.href)
                     ? "bg-primary-soft text-primary-strong"
@@ -84,6 +81,7 @@ export function StoreNav({
                 href={cta.href}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={() => setOpen(false)}
                 className="mt-2 rounded-2xl bg-primary px-4 py-3 text-center text-base font-black text-white transition-colors hover:bg-primary-hover"
               >
                 {cta.label}

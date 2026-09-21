@@ -94,7 +94,7 @@ export async function syncSheets(): Promise<SyncResult> {
           salesByKey.set(key, [
             o.orderNo,
             formatDate(o.createdAt),
-            o.source === "SITE" ? "الموقع" : "واتساب",
+            o.source === OrderSource.SITE ? "الموقع" : "واتساب",
             ORDER_STATUS_LABEL[o.status],
             o.customerName,
             item.product.sku,

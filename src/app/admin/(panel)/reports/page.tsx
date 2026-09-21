@@ -3,19 +3,83 @@ import { prisma } from "@/lib/prisma";
 import { getSettings } from "@/lib/settings";
 import { money, formatDateTime } from "@/lib/format";
 import { profit, profitMargin } from "@/lib/inventory";
+import { aggregateSoldItems } from "@/lib/report-aggregates";
 import { Badge, Card } from "@/components/ui";
 import { SyncNowButton } from "@/components/admin/sync-now-button";
 
 export const dynamic = "force-dynamic";
 
 const SOLD = [OrderStatus.CONFIRMED, OrderStatus.PAID, OrderStatus.SHIPPED, OrderStatus.DELIVERED];
+const SOLD_STATUSES_SQL = Prisma.raw("'CONFIRMED','PAID','SHIPPED','DELIVERED'");
+
+interface AggRow {
+  productId: string;
+  qty: number;
+  revenue: number;
+  cost: number;
+}
+
+interface TopProduct {
+  sku: string;
+  name: string;
+  qty: number;
+  revenue: number;
+  cost: number;
+}
+
+async function loadTopProducts(): Promise<TopProduct[]> {
+  let counts: Map<string, { qty: number; revenue: number; cost: number }>;
+  try {
+    const rows = await prisma.$queryRaw<AggRow[]>`
+      SELECT "OrderItem"."productId" AS "productId",
+             CAST(SUM("OrderItem"."quantity") AS INTEGER) AS "qty",
+             COALESCE(SUM("OrderItem"."quantity" * "OrderItem"."unitPrice"), 0) AS "revenue",
+             COALESCE(SUM("OrderItem"."quantity" * "OrderItem"."unitCost"), 0) AS "cost"
+      FROM "OrderItem"
+      INNER JOIN "Order" ON "Order"."id" = "OrderItem"."orderId"
+      WHERE "Order"."status" IN (${SOLD_STATUSES_SQL})
+      GROUP BY "OrderItem"."productId"
+    `;
+    if (!Array.isArray(rows)) throw new Error("استعلام التقارير لم يعد صفوفًا");
+    counts = new Map(
+      rows.map((r) => [
+        r.productId,
+        { qty: Number(r.qty) || 0, revenue: Number(r.revenue) || 0, cost: Number(r.cost) || 0 },
+      ])
+    );
+  } catch (error) {
+    console.error("فشل التجميع عبر SQL — ارتداد إلى تجميع Prisma:", error);
+    const items = await prisma.orderItem.findMany({
+      where: { order: { status: { in: SOLD } } },
+      select: { productId: true, quantity: true, unitPrice: true, unitCost: true },
+    });
+    counts = aggregateSoldItems(items);
+  }
+
+  if (counts.size === 0) return [];
+  const products = await prisma.product.findMany({
+    where: { id: { in: [...counts.keys()] } },
+    select: { id: true, sku: true, name: true },
+  });
+  const productById = new Map(products.map((p) => [p.id, p]));
+
+  return [...counts.entries()]
+    .map(([productId, a]) => ({
+      sku: productById.get(productId)?.sku ?? "مجهول",
+      name: productById.get(productId)?.name ?? "مجهول",
+      qty: a.qty,
+      revenue: a.revenue,
+      cost: a.cost,
+    }))
+    .sort((a, b) => b.qty - a.qty);
+}
 
 export default async function ReportsPage() {
   const settings = await getSettings();
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-  const [soldOrders, monthOrders, aggregated] = await Promise.all([
+  const [soldOrders, monthOrders, topProducts] = await Promise.all([
     prisma.order.findMany({
       where: { status: { in: [...SOLD, OrderStatus.CANCELLED] } },
       select: { status: true, totalAmount: true, totalCost: true },
@@ -24,15 +88,7 @@ export default async function ReportsPage() {
       where: { createdAt: { gte: startOfMonth }, status: { in: SOLD } },
       select: { totalAmount: true, totalCost: true },
     }),
-    prisma.$queryRaw<Array<{ productId: string; qty: bigint | number; revenue: number; cost: number }>>`
-      SELECT "productId",
-             CAST(SUM("quantity") AS INTEGER) AS "qty",
-             COALESCE(SUM("quantity" * "unitPrice"), 0) AS "revenue",
-             COALESCE(SUM("quantity" * "unitCost"), 0) AS "cost"
-      FROM "OrderItem"
-      WHERE "orderId" IN (SELECT "id" FROM "Order" WHERE "status" IN (${Prisma.join(SOLD)}))
-      GROUP BY "productId"
-    `,
+    loadTopProducts(),
   ]);
 
   const activeSold = soldOrders.filter((o) => o.status !== OrderStatus.CANCELLED);
@@ -43,27 +99,6 @@ export default async function ReportsPage() {
 
   const monthRevenue = monthOrders.reduce((s, o) => s + o.totalAmount, 0);
   const monthCost = monthOrders.reduce((s, o) => s + o.totalCost, 0);
-
-  const productIds = aggregated.map((r) => r.productId);
-  const products = productIds.length
-    ? await prisma.product.findMany({
-        where: { id: { in: productIds } },
-        select: { id: true, sku: true, name: true },
-      })
-    : [];
-  const productById = new Map(products.map((p) => [p.id, p]));
-  const topProducts = aggregated
-    .map((r) => {
-      const product = productById.get(r.productId);
-      return {
-        sku: product?.sku ?? "مجهول",
-        name: product?.name ?? "مجهول",
-        qty: Number(r.qty) || 0,
-        revenue: Number(r.revenue) || 0,
-        cost: Number(r.cost) || 0,
-      };
-    })
-    .sort((a, b) => b.qty - a.qty);
 
   const stats = [
     { label: "إجمالي الإيرادات", value: money(totalRevenue, settings.currency, settings.currencyPosition) },
