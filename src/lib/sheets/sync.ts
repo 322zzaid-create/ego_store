@@ -82,30 +82,39 @@ export async function syncSheets(): Promise<SyncResult> {
       }
     }
 
-    const salesRows: (string | number)[][] = [
-      ["رقم الطلب", "التاريخ", "المصدر", "الحالة", "العميل", "الرمز", "المنتج", "المقاس", "اللون", "الطباعة", "الكمية", "سعر الوحدة", "المبلغ", "طريقة الدفع", "حالة الدفع"],
-    ];
+    const salesByKey = new Map<string, (string | number)[]>();
     for (const o of orders) {
       for (const item of o.items) {
-        salesRows.push([
-          o.orderNo,
-          formatDate(o.createdAt),
-          o.source === OrderSource.SITE ? "الموقع" : "واتساب",
-          ORDER_STATUS_LABEL[o.status],
-          o.customerName,
-          item.product.sku,
-          item.product.name,
-          item.size,
-          item.color,
-          item.printDetails || "",
-          item.quantity,
-          item.unitPrice,
-          +((item.unitPrice * item.quantity).toFixed(2)),
-          PAYMENT_METHOD_LABEL[o.paymentMethod],
-          PAYMENT_STATUS_LABEL[o.paymentStatus],
-        ]);
+        const key = `${o.orderNo}|${item.product.sku}|${item.size}|${item.color}|${item.printDetails || ""}`;
+        const row = salesByKey.get(key);
+        if (row) {
+          row[10] = (row[10] as number) + item.quantity;
+          row[12] = +((row[12] as number) + item.unitPrice * item.quantity).toFixed(2);
+        } else {
+          salesByKey.set(key, [
+            o.orderNo,
+            formatDate(o.createdAt),
+            o.source === "SITE" ? "الموقع" : "واتساب",
+            ORDER_STATUS_LABEL[o.status],
+            o.customerName,
+            item.product.sku,
+            item.product.name,
+            item.size,
+            item.color,
+            item.printDetails || "",
+            item.quantity,
+            item.unitPrice,
+            +((item.unitPrice * item.quantity).toFixed(2)),
+            PAYMENT_METHOD_LABEL[o.paymentMethod],
+            PAYMENT_STATUS_LABEL[o.paymentStatus],
+          ]);
+        }
       }
     }
+    const salesRows: (string | number)[][] = [
+      ["رقم الطلب", "التاريخ", "المصدر", "الحالة", "العميل", "الرمز", "المنتج", "المقاس", "اللون", "الطباعة", "الكمية", "سعر الوحدة", "المبلغ", "طريقة الدفع", "حالة الدفع"],
+      ...salesByKey.values(),
+    ];
 
     const invoiceRows: (string | number)[][] = [
       ["رقم الفاتورة", "رقم الطلب", "التاريخ", "المبلغ", "حالة الطلب"],
@@ -145,13 +154,22 @@ export async function syncSheets(): Promise<SyncResult> {
     profitRows.push([]);
     profitRows.push(["الملخص", "", "", revenue, cost, +(revenue - cost).toFixed(2), revenue === 0 ? 0 : +(((revenue - cost) / revenue) * 100).toFixed(1), ""]);
 
-    await ensureTabs(api.client, api.spreadsheetId);
-    await Promise.all([
-      writeSheet(api.client, api.spreadsheetId, TAB_NAMES.inventory, inventoryRows),
-      writeSheet(api.client, api.spreadsheetId, TAB_NAMES.sales, salesRows),
-      writeSheet(api.client, api.spreadsheetId, TAB_NAMES.invoices, invoiceRows),
-      writeSheet(api.client, api.spreadsheetId, TAB_NAMES.profit, profitRows),
-    ]);
+    const writeAll = async (): Promise<void> => {
+      await ensureTabs(api.client, api.spreadsheetId);
+      await Promise.all([
+        writeSheet(api.client, api.spreadsheetId, TAB_NAMES.inventory, inventoryRows),
+        writeSheet(api.client, api.spreadsheetId, TAB_NAMES.sales, salesRows),
+        writeSheet(api.client, api.spreadsheetId, TAB_NAMES.invoices, invoiceRows),
+        writeSheet(api.client, api.spreadsheetId, TAB_NAMES.profit, profitRows),
+      ]);
+    };
+
+    try {
+      await writeAll();
+    } catch (writeError) {
+      console.error("[sheets] فشلت كتابة التبويبات — إعادة محاولة:", writeError);
+      await writeAll();
+    }
 
     await setSetting("googleSheetStatus", "متصل");
     await setSetting("lastSyncAt", new Date().toISOString());
@@ -166,6 +184,7 @@ export async function syncSheets(): Promise<SyncResult> {
       },
     };
   } catch (error) {
+    console.error("[sheets] فشلت مزامنة Google Sheets:", error);
     await setSetting("googleSheetStatus", "خطأ في المزامنة");
     return {
       ok: false,
