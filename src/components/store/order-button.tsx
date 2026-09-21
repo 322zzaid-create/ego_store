@@ -5,7 +5,7 @@ import type { VariantWithBalance } from "@/lib/catalog";
 import type { AppSettings } from "@/lib/settings";
 import { money } from "@/lib/format";
 import { createSiteOrder } from "@/lib/order-actions";
-import { Button, Input, Select, Textarea, inputClass } from "@/components/ui";
+import { Button, Input, Textarea, inputClass } from "@/components/ui";
 
 interface Props {
   productId: string;
@@ -21,7 +21,6 @@ interface Props {
 
 export function OrderButton({
   productId,
-  name,
   sku,
   basePrice,
   stockPolicy,
@@ -43,12 +42,7 @@ export function OrderButton({
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
   const sizes = [...new Set(variants.map((v) => v.size))];
-  const colors = [...new Set(variants.map((v) => v.color))];
   const hasVariants = variants.length > 0;
-
-  const selectedVariants = variants.filter(
-    (v) => (hasVariants ? v.size === size && v.color === color : true)
-  );
 
   async function submit() {
     setMessage(null);
@@ -196,8 +190,12 @@ export function OrderButton({
           <input
             type="number"
             min={1}
+            max={99}
             value={quantity}
-            onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value || "1", 10)))}
+            onChange={(e) => {
+              const parsed = parseInt(e.target.value, 10);
+              setQuantity(Number.isNaN(parsed) ? 1 : Math.max(1, Math.min(99, parsed)));
+            }}
             className={inputClass}
           />
         </div>

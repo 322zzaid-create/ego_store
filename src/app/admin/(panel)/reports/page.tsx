@@ -1,4 +1,4 @@
-import { OrderStatus } from "@prisma/client";
+import { OrderStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getSettings } from "@/lib/settings";
 import { money, formatDateTime } from "@/lib/format";
@@ -24,10 +24,15 @@ export default async function ReportsPage() {
       where: { createdAt: { gte: startOfMonth }, status: { in: SOLD } },
       select: { totalAmount: true, totalCost: true },
     }),
-    prisma.orderItem.findMany({
-      where: { order: { status: { in: SOLD } } },
-      include: { product: true },
-    }),
+    prisma.$queryRaw<Array<{ productId: string; qty: bigint | number; revenue: number; cost: number }>>`
+      SELECT "productId",
+             CAST(SUM("quantity") AS INTEGER) AS "qty",
+             COALESCE(SUM("quantity" * "unitPrice"), 0) AS "revenue",
+             COALESCE(SUM("quantity" * "unitCost"), 0) AS "cost"
+      FROM "OrderItem"
+      WHERE "orderId" IN (SELECT "id" FROM "Order" WHERE "status" IN (${Prisma.join(SOLD)}))
+      GROUP BY "productId"
+    `,
   ]);
 
   const activeSold = soldOrders.filter((o) => o.status !== OrderStatus.CANCELLED);
@@ -39,21 +44,26 @@ export default async function ReportsPage() {
   const monthRevenue = monthOrders.reduce((s, o) => s + o.totalAmount, 0);
   const monthCost = monthOrders.reduce((s, o) => s + o.totalCost, 0);
 
-  const byProduct = new Map<string, { sku: string; name: string; qty: number; revenue: number; cost: number }>();
-  for (const item of aggregated) {
-    const entry = byProduct.get(item.productId) ?? {
-      sku: item.product.sku,
-      name: item.product.name,
-      qty: 0,
-      revenue: 0,
-      cost: 0,
-    };
-    entry.qty += item.quantity;
-    entry.revenue += item.unitPrice * item.quantity;
-    entry.cost += item.unitCost * item.quantity;
-    byProduct.set(item.productId, entry);
-  }
-  const topProducts = [...byProduct.values()].sort((a, b) => b.qty - a.qty);
+  const productIds = aggregated.map((r) => r.productId);
+  const products = productIds.length
+    ? await prisma.product.findMany({
+        where: { id: { in: productIds } },
+        select: { id: true, sku: true, name: true },
+      })
+    : [];
+  const productById = new Map(products.map((p) => [p.id, p]));
+  const topProducts = aggregated
+    .map((r) => {
+      const product = productById.get(r.productId);
+      return {
+        sku: product?.sku ?? "مجهول",
+        name: product?.name ?? "مجهول",
+        qty: Number(r.qty) || 0,
+        revenue: Number(r.revenue) || 0,
+        cost: Number(r.cost) || 0,
+      };
+    })
+    .sort((a, b) => b.qty - a.qty);
 
   const stats = [
     { label: "إجمالي الإيرادات", value: money(totalRevenue, settings.currency, settings.currencyPosition) },

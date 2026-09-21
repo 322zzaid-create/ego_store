@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Category, StockPolicy } from "@prisma/client";
+import { StockPolicy } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { parseImageList } from "@/lib/catalog";
 import { money } from "@/lib/format";

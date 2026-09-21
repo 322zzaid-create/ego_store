@@ -1,15 +1,24 @@
 import { compare } from "bcryptjs";
-import { createHmac, timingSafeEqual } from "crypto";
-import { cookies } from "next/headers";
+import { createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "./prisma";
 import { ensureAdminPassword } from "./settings";
+import { rateLimitClear, rateLimitHit } from "./rate-limit";
 
 const SESSION_COOKIE = "ego_session";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
+const LOGIN_LIMIT = { windowMs: 15 * 60_000, max: 5 };
+
+let devSecret: string | null = null;
 
 function secret(): string {
-  return process.env.AUTH_SECRET || "ego-dev-secret-change-me";
+  if (process.env.AUTH_SECRET) return process.env.AUTH_SECRET;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("AUTH_SECRET غير معرف — اضبطه في متغيرات بيئة الإنتاج");
+  }
+  if (!devSecret) devSecret = randomBytes(32).toString("base64url");
+  return devSecret;
 }
 
 function sign(payload: string): string {
@@ -64,11 +73,21 @@ export async function requireAdmin(): Promise<void> {
   if (!(await isAdmin())) redirect("/admin/login");
 }
 
+async function clientIp(): Promise<string> {
+  const h = await headers();
+  return h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || "unknown";
+}
+
 export async function loginAdmin(plain: string): Promise<boolean> {
+  const key = `login:${await clientIp()}`;
+  if (rateLimitHit(key, LOGIN_LIMIT)) return false;
   await ensureAdminPassword();
   const row = await prisma.setting.findUnique({ where: { key: "adminPasswordHash" } });
   if (!row?.value) return false;
   const ok = await compare(plain, row.value);
-  if (ok) await setSession();
+  if (ok) {
+    rateLimitClear(key);
+    await setSession();
+  }
   return ok;
 }

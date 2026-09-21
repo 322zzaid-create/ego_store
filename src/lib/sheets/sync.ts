@@ -1,7 +1,7 @@
-import { StockPolicy, OrderStatus } from "@prisma/client";
+import { StockPolicy, OrderStatus, OrderSource } from "@prisma/client";
 import { prisma } from "../prisma";
 import { getSettings, setSetting } from "../settings";
-import { ensureTabs, getSheetsApi, writeSheet, TAB_NAMES } from "./client";
+import { ensureTabs, getSheetsApi, writeSheet, TAB_NAMES, sheetsConfigured } from "./client";
 import { remaining } from "../inventory";
 import { formatDate } from "../format";
 import { CATEGORY_LABEL, ORDER_STATUS_LABEL, PAYMENT_METHOD_LABEL, PAYMENT_STATUS_LABEL } from "../labels";
@@ -13,6 +13,18 @@ export interface SyncResult {
 }
 
 const SOLD_STATUSES = [OrderStatus.CONFIRMED, OrderStatus.PAID, OrderStatus.SHIPPED, OrderStatus.DELIVERED];
+
+export function triggerSheetsSync(): void {
+  void (async () => {
+    try {
+      const settings = await getSettings();
+      if (!sheetsConfigured(settings)) return;
+      await syncSheets();
+    } catch {
+      // مزامنة خلفية اختيارية — لا تُسقط العملية الحالية
+    }
+  })();
+}
 
 export async function syncSheets(): Promise<SyncResult> {
   const settings = await getSettings();
@@ -78,7 +90,7 @@ export async function syncSheets(): Promise<SyncResult> {
         salesRows.push([
           o.orderNo,
           formatDate(o.createdAt),
-          o.source === "SITE" ? "الموقع" : "واتساب",
+          o.source === OrderSource.SITE ? "الموقع" : "واتساب",
           ORDER_STATUS_LABEL[o.status],
           o.customerName,
           item.product.sku,
@@ -134,10 +146,12 @@ export async function syncSheets(): Promise<SyncResult> {
     profitRows.push(["الملخص", "", "", revenue, cost, +(revenue - cost).toFixed(2), revenue === 0 ? 0 : +(((revenue - cost) / revenue) * 100).toFixed(1), ""]);
 
     await ensureTabs(api.client, api.spreadsheetId);
-    await writeSheet(api.client, api.spreadsheetId, TAB_NAMES.inventory, inventoryRows);
-    await writeSheet(api.client, api.spreadsheetId, TAB_NAMES.sales, salesRows);
-    await writeSheet(api.client, api.spreadsheetId, TAB_NAMES.invoices, invoiceRows);
-    await writeSheet(api.client, api.spreadsheetId, TAB_NAMES.profit, profitRows);
+    await Promise.all([
+      writeSheet(api.client, api.spreadsheetId, TAB_NAMES.inventory, inventoryRows),
+      writeSheet(api.client, api.spreadsheetId, TAB_NAMES.sales, salesRows),
+      writeSheet(api.client, api.spreadsheetId, TAB_NAMES.invoices, invoiceRows),
+      writeSheet(api.client, api.spreadsheetId, TAB_NAMES.profit, profitRows),
+    ]);
 
     await setSetting("googleSheetStatus", "متصل");
     await setSetting("lastSyncAt", new Date().toISOString());

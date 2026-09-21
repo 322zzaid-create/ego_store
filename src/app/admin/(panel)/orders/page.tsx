@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { OrderStatus } from "@prisma/client";
+import { OrderSource, OrderStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getSettings } from "@/lib/settings";
 import { money, formatDateTime } from "@/lib/format";
@@ -18,7 +18,7 @@ export default async function OrdersPage({
   const params = await searchParams;
   const settings = await getSettings();
   const status = STATUS_FILTERS.includes(params.status as OrderStatus) ? (params.status as OrderStatus) : undefined;
-  const source = params.source === "SITE" || params.source === "WHATSAPP" ? params.source : undefined;
+  const source = params.source === OrderSource.SITE || params.source === OrderSource.WHATSAPP ? params.source : undefined;
   const q = params.q?.trim();
 
   const orders = await prisma.order.findMany({
@@ -102,7 +102,7 @@ export default async function OrdersPage({
                     {o.customerPhone ? <p className="text-xs text-zinc-400" dir="ltr">{o.customerPhone}</p> : null}
                   </td>
                   <td className="px-4 py-3">
-                    <Badge color={o.source === "WHATSAPP" ? "amber" : "blue"}>{SOURCE_LABEL[o.source]}</Badge>
+                    <Badge color={o.source === OrderSource.WHATSAPP ? "amber" : "blue"}>{SOURCE_LABEL[o.source]}</Badge>
                   </td>
                   <td className="px-4 py-3">
                     <span className="text-zinc-600">{o.items.length} صنف</span>

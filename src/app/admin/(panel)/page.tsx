@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { OrderStatus } from "@prisma/client";
+import { OrderStatus, StockPolicy } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getSettings } from "@/lib/settings";
-import { money, formatDateTime } from "@/lib/format";
+import { formatDateTime } from "@/lib/format";
 import { ORDER_STATUS_LABEL, ORDER_STATUS_COLOR } from "@/lib/labels";
 import { Badge, Card, EmptyState } from "@/components/ui";
 
@@ -24,8 +24,8 @@ export default async function DashboardPage() {
     }),
     prisma.order.findMany({ orderBy: { createdAt: "desc" }, take: 8 }),
     prisma.product.findMany({
-      where: { stockPolicy: "STOCKED" },
-      include: { variants: true, orderItems: { select: { quantity: true, size: true, color: true } } },
+      where: { stockPolicy: StockPolicy.STOCKED },
+      include: { variants: true },
     }),
   ]);
 

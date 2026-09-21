@@ -58,6 +58,10 @@ model Order {
   confirmedAt   DateTime?
   items         OrderItem[]
   invoice       Invoice?
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([status, createdAt])
 }
 
 model OrderItem {

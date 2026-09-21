@@ -3,13 +3,10 @@ import { prisma } from "@/lib/prisma";
 import { getSettings } from "@/lib/settings";
 import { money, formatDate } from "@/lib/format";
 import {
-  ORDER_STATUS_LABEL,
-  ORDER_STATUS_COLOR,
   PAYMENT_METHOD_LABEL,
   SOURCE_LABEL,
 } from "@/lib/labels";
 import { buildWhatsAppLink, buildInvoiceMessage } from "@/lib/whatsapp";
-import { Badge } from "@/components/ui";
 import { InvoiceTools } from "@/components/admin/invoice-tools";
 
 export const dynamic = "force-dynamic";

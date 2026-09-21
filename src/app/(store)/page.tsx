@@ -41,7 +41,7 @@ export default async function HomePage() {
             تسوق الآن
           </Link>
           <Link
-            href="/products?recipe=made_to_order"
+            href="/products?recipe=MADE_TO_ORDER"
             className="rounded-lg border border-white/30 px-6 py-3 font-bold text-white transition-colors hover:bg-white/10"
           >
             طلبية الطباعة

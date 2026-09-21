@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { OrderSource } from "@prisma/client";
 import type { ProductWithBalance } from "@/lib/catalog";
 import type { AppSettings } from "@/lib/settings";
 import { createOrderRecord } from "@/lib/order-actions";
 import { money } from "@/lib/format";
-import { Button, Field, Input, Select, Textarea } from "@/components/ui";
+import { Button, Field, Input, Textarea } from "@/components/ui";
 
 interface Line {
   product: ProductWithBalance;
@@ -69,7 +70,7 @@ export function OrderForm({ products, settings }: { products: ProductWithBalance
     }
     setBusy(true);
     const res = await createOrderRecord({
-      source: "WHATSAPP",
+      source: OrderSource.WHATSAPP,
       customerName,
       customerPhone,
       paymentMethod,

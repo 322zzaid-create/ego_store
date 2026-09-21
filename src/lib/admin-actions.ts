@@ -1,12 +1,14 @@
 "use server";
 
 import { Category, StockPolicy } from "@prisma/client";
+import { revalidateTag } from "next/cache";
 import { prisma } from "./prisma";
 import { requireAdmin } from "./auth";
-import { bumpCounter, getCounter, setSettingsMany, setAdminPassword } from "./settings";
+import { bumpCounter, setSettingsMany, setAdminPassword } from "./settings";
 import { nextSku } from "./order-keys";
 import { slugify } from "./slug";
 import { syncSheets } from "./sheets/sync";
+import { CATALOG_TAG } from "./catalog";
 import type { SyncResult } from "./sheets/sync";
 
 export interface VariantInput {
@@ -71,14 +73,15 @@ export async function saveProduct(input: ProductInput): Promise<{ ok: boolean; m
         });
       }
     });
+    revalidateTag(CATALOG_TAG, { expire: 0 });
     return { ok: true, message: "تم حفظ المنتج", id: input.id };
   }
 
-  const counter = await bumpCounter("SKU_COUNTER");
-  const sku = nextSku("EGO", counter);
+  const skuCounter = await bumpCounter("SKU_COUNTER");
+  const sku = nextSku("EGO", skuCounter);
   let slug = slugify(name, sku.toLowerCase());
   const slugExists = await prisma.product.findUnique({ where: { slug } });
-  if (slugExists) slug = `${slug}-${counter}`;
+  if (slugExists) slug = `${slug}-${skuCounter}`;
 
   const product = await prisma.product.create({
     data: {
@@ -94,6 +97,7 @@ export async function saveProduct(input: ProductInput): Promise<{ ok: boolean; m
       },
     },
   });
+  revalidateTag(CATALOG_TAG, { expire: 0 });
   return { ok: true, message: "تم إنشاء المنتج برمز " + sku, id: product.id };
 }
 
@@ -102,6 +106,7 @@ export async function toggleProductActive(id: string): Promise<{ ok: boolean; me
   const product = await prisma.product.findUnique({ where: { id } });
   if (!product) return { ok: false, message: "المنتج غير موجود" };
   await prisma.product.update({ where: { id }, data: { active: !product.active } });
+  revalidateTag(CATALOG_TAG, { expire: 0 });
   return { ok: true, message: product.active ? "تم تعطيل المنتج (اختفى من الموقع)" : "تم تفعيل المنتج" };
 }
 
@@ -112,6 +117,7 @@ export async function deleteProduct(id: string): Promise<{ ok: boolean; message:
     return { ok: false, message: "لا يمكن الحذف لوجود طلبات مرتبطة — عطّله بدلًا من ذلك" };
   }
   await prisma.product.delete({ where: { id } });
+  revalidateTag(CATALOG_TAG, { expire: 0 });
   return { ok: true, message: "تم حذف المنتج نهائيًا" };
 }
 

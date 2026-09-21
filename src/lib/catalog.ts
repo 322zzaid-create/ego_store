@@ -1,7 +1,10 @@
 import { Category, Product, StockPolicy } from "@prisma/client";
+import { unstable_cache } from "next/cache";
 import { prisma } from "./prisma";
 import { remaining, isSoldOut, isAvailable } from "./inventory";
 import { SOLD_STATUSES } from "./sold-statuses";
+
+export const CATALOG_TAG = "catalog";
 
 export type VariantWithBalance = {
   id: string;
@@ -28,7 +31,7 @@ export interface CatalogFilter {
   onlyActive?: boolean;
 }
 
-export async function fetchCatalog(
+export async function rawFetchCatalog(
   filter: CatalogFilter = {}
 ): Promise<ProductWithBalance[]> {
   const { category, policy, search, includeSoldOut = true, onlyActive = true } = filter;
@@ -45,11 +48,18 @@ export async function fetchCatalog(
     orderBy: { createdAt: "desc" },
   });
 
-  const aggs = await prisma.orderItem.groupBy({
-    by: ["productId", "size", "color"],
-    where: { order: { status: { in: SOLD_STATUSES } } },
-    _sum: { quantity: true },
-  });
+  const productIds = products.map((p) => p.id);
+  const aggs =
+    productIds.length > 0
+      ? await prisma.orderItem.groupBy({
+          by: ["productId", "size", "color"],
+          where: {
+            order: { status: { in: SOLD_STATUSES } },
+            productId: { in: productIds },
+          },
+          _sum: { quantity: true },
+        })
+      : [];
   const aggByKey = new Map<string, number>();
   for (const agg of aggs) {
     aggByKey.set(
@@ -87,7 +97,12 @@ export async function fetchCatalog(
   return result;
 }
 
-export async function fetchProductBySlug(
+export const fetchCatalog = unstable_cache(rawFetchCatalog, ["ego-catalog-page"], {
+  tags: [CATALOG_TAG],
+  revalidate: 60,
+});
+
+export async function rawFetchProductBySlug(
   slug: string
 ): Promise<ProductWithBalance | null> {
   const product = await prisma.product.findUnique({
@@ -135,6 +150,11 @@ export async function fetchProductBySlug(
     mainImage: parseImageList(product.images)[0] ?? null,
   };
 }
+
+export const fetchProductBySlug = unstable_cache(rawFetchProductBySlug, ["ego-product-page"], {
+  tags: [CATALOG_TAG],
+  revalidate: 60,
+});
 
 export function parseImageList(images: string): string[] {
   try {

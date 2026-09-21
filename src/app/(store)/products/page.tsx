@@ -14,9 +14,15 @@ export default async function ProductsPage({
   const params = await searchParams;
   const settings = await getSettings();
 
-  const category = params.category as Category | undefined;
-  const policy = params.recipe as StockPolicy | undefined;
-  const q = params.q?.trim() || undefined;
+  const category =
+    params.category && (Object.values(Category) as string[]).includes(params.category)
+      ? (params.category as Category)
+      : undefined;
+  const policy =
+    params.recipe && (Object.values(StockPolicy) as string[]).includes(params.recipe)
+      ? (params.recipe as StockPolicy)
+      : undefined;
+  const q = params.q?.trim().slice(0, 100) || undefined;
 
   const products = await fetchCatalog({ category, policy, search: q });
 

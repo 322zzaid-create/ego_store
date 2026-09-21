@@ -37,7 +37,10 @@ const DEFAULTS: Record<string, string> = {
   SKU_COUNTER: "0",
 };
 
+let seededOk = false;
+
 export async function ensureSettingsSeeded(): Promise<void> {
+  if (seededOk) return;
   const existing = await prisma.setting.findMany();
   const keys = new Set(existing.map((s) => s.key));
   const missing = Object.entries(DEFAULTS).filter(([k]) => !keys.has(k));
@@ -52,6 +55,7 @@ export async function ensureSettingsSeeded(): Promise<void> {
       )
     );
   }
+  seededOk = true;
 }
 
 export async function getSettingsMap(): Promise<Record<string, string>> {
@@ -99,24 +103,28 @@ export async function setSettingsMany(entries: Record<string, string>): Promise<
   }
 }
 
-export async function getCounter(name: string): Promise<number> {
-  await ensureSettingsSeeded();
-  const row = await prisma.setting.findUnique({ where: { key: name } });
-  const value = parseInt(row?.value ?? "0", 10);
-  return Number.isNaN(value) ? 0 : value;
-}
-
 export async function bumpCounter(name: string): Promise<number> {
-  await prisma.$transaction(async (tx) => {
-    const row = await tx.setting.findUnique({ where: { key: name } });
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const row = await prisma.setting.findUnique({ where: { key: name } });
     const current = parseInt(row?.value ?? "0", 10) || 0;
-    await tx.setting.upsert({
-      where: { key: name },
-      update: { value: String(current + 1) },
-      create: { key: name, value: String(current + 1) },
-    });
-  });
-  return getCounter(name);
+    const next = current + 1;
+    if (row) {
+      const updated = await prisma.setting.updateMany({
+        where: { key: name, value: String(current) },
+        data: { value: String(next) },
+      });
+      if (updated.count === 1) return next;
+      continue;
+    }
+    try {
+      await prisma.setting.create({ data: { key: name, value: String(next) } });
+      return next;
+    } catch (error) {
+      if ((error as { code?: string })?.code === "P2002") continue;
+      throw error;
+    }
+  }
+  throw new Error(`تعذر حجز رقم تسلسلي: ${name}`);
 }
 
 export async function ensureAdminPassword(): Promise<void> {

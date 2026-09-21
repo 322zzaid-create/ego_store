@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { StockPolicy } from "@prisma/client";
-import { fetchCatalog, fetchProductBySlug, parseImageList } from "@/lib/catalog";
+import { fetchProductBySlug, parseImageList } from "@/lib/catalog";
 import { getSettings } from "@/lib/settings";
 import { money } from "@/lib/format";
 import { CATEGORY_LABEL, STOCK_POLICY_LABEL } from "@/lib/labels";

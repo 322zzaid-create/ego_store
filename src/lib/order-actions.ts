@@ -1,13 +1,16 @@
 "use server";
 
-import { OrderSource, OrderStatus, PaymentMethod, Variant } from "@prisma/client";
+import { OrderSource, OrderStatus, PaymentMethod, PaymentStatus, Prisma, StockPolicy, Variant } from "@prisma/client";
+import { revalidateTag } from "next/cache";
 import { prisma } from "./prisma";
 import { requireAdmin } from "./auth";
 import { orderTotal, orderCost } from "./inventory";
 import { getSettings } from "./settings";
-import { bumpCounter, getCounter } from "./settings";
-import { nextOrderNo } from "./order-keys";
-import { syncSheets } from "./sheets/sync";
+import { bumpCounter } from "./settings";
+import { nextOrderNo, nextInvoiceNo } from "./order-keys";
+import { triggerSheetsSync } from "./sheets/sync";
+import { CATALOG_TAG } from "./catalog";
+import { rateLimitHit } from "./rate-limit";
 
 export interface BuyLine {
   productId: string;
@@ -27,6 +30,7 @@ interface CreateOrderInput {
 }
 
 const SOLD = [OrderStatus.CONFIRMED, OrderStatus.PAID, OrderStatus.SHIPPED, OrderStatus.DELIVERED];
+const SITE_ORDER_LIMIT = { windowMs: 30 * 60_000, max: 5 };
 
 export async function createOrderRecord(input: CreateOrderInput): Promise<{
   ok: boolean;
@@ -77,9 +81,7 @@ export async function createOrderRecord(input: CreateOrderInput): Promise<{
   const totalAmount = +(baseTotal + settings.deliveryFee).toFixed(2);
   const totalCost = orderCost(items.map((it) => ({ unitCost: it.unitCost, quantity: it.quantity })));
 
-  const counter = await bumpCounter("ORD_COUNTER");
-  const orderNo = nextOrderNo(await getCounter("ORD_COUNTER"));
-  void counter;
+  const orderNo = nextOrderNo(await bumpCounter("ORD_COUNTER"));
 
   const order = await prisma.order.create({
     data: {
@@ -89,7 +91,7 @@ export async function createOrderRecord(input: CreateOrderInput): Promise<{
       customerName: input.customerName.trim(),
       customerPhone: input.customerPhone.trim(),
       paymentMethod: input.paymentMethod,
-      paymentStatus: "PENDING",
+      paymentStatus: PaymentStatus.PENDING,
       totalAmount,
       totalCost,
       notes: input.notes ?? "",
@@ -102,91 +104,112 @@ export async function createOrderRecord(input: CreateOrderInput): Promise<{
 
 export async function confirmOrder(orderId: string): Promise<{ ok: boolean; message: string }> {
   await requireAdmin();
-  const order = await prisma.order.findUnique({
+  const existing = await prisma.order.findUnique({
     where: { id: orderId },
-    include: { items: { include: { product: { include: { variants: true } } } } },
+    select: { status: true },
   });
-  if (!order) return { ok: false, message: "الطلب غير موجود" };
-  if (order.status !== OrderStatus.PENDING) {
+  if (!existing) return { ok: false, message: "الطلب غير موجود" };
+  if (existing.status !== OrderStatus.PENDING) {
     return { ok: false, message: "لا يمكن تأكيد طلب ليس بانتظار التأكيد" };
   }
 
-  const variants = new Map<string, { stockQty: number; confirmed: number }>();
-  for (const item of order.items) {
-    if (item.product.stockPolicy === "MADE_TO_ORDER") continue;
-    const key = `${item.productId}|${item.size}|${item.color}`;
-    if (!variants.has(key)) {
-      variants.set(key, { stockQty: 0, confirmed: 0 });
-    }
-  }
-  const variantRows = await prisma.variant.findMany({
-    where: {
-      productId: { in: order.items.map((i) => i.productId) },
-    },
-  });
-  const variantMap = new Map<string, Variant>();
-  for (const v of variantRows) variantMap.set(`${v.productId}|${v.size}|${v.color}`, v);
-
-  if (variants.size > 0) {
-    const aggs = await prisma.orderItem.groupBy({
-      by: ["productId", "size", "color"],
-      where: {
-        order: { status: { in: SOLD } },
-        productId: { in: order.items.map((i) => i.productId) },
-      },
-      _sum: { quantity: true },
-    });
-    for (const agg of aggs) {
-      const key = `${agg.productId}|${agg.size}|${agg.color}`;
-      const entry = variants.get(key);
-      if (entry) entry.confirmed += agg._sum.quantity ?? 0;
-    }
-  }
-
-  for (const item of order.items) {
-    if (item.product.stockPolicy === "MADE_TO_ORDER") continue;
-    const key = `${item.productId}|${item.size}|${item.color}`;
-    const entry = variants.get(key)!;
-    const v = variantMap.get(key);
-    if (!v) return { ok: false, message: `مقاس ${item.size} — لون ${item.color} لم يعد موجودًا` };
-    entry.stockQty = v.stockQty;
-    if (entry.stockQty - entry.confirmed < item.quantity) {
-      return {
-        ok: false,
-        message: `المخزون لا يكفي: ${item.product.name} (${item.size}/${item.color}) — المتاح ${Math.max(0, entry.stockQty - entry.confirmed)}`,
-      };
-    }
-  }
-
-  const invoiceNoCounter = await bumpCounter("INV_COUNTER");
-  const invoiceNo = `INV-${String(await getCounter("INV_COUNTER")).padStart(4, "0")}`;
-  void invoiceNoCounter;
+  const invoiceNo = nextInvoiceNo(await bumpCounter("INV_COUNTER"));
 
   try {
-    await prisma.$transaction(async (tx) => {
-      await tx.order.update({
-        where: { id: orderId },
-        data: {
-          status: OrderStatus.CONFIRMED,
-          confirmedAt: new Date(),
-          totalAmount: order.totalAmount,
-          totalCost: order.totalCost,
-        },
-      });
-      await tx.invoice.create({
-        data: {
-          invoiceNo,
-          orderId,
-          amount: order.totalAmount,
-        },
-      });
-    });
-  } catch {
-    return { ok: false, message: "فشل إصدار الفاتورة" };
+    await confirmOrderAtomic(orderId, invoiceNo);
+  } catch (error) {
+    if (error instanceof ConfirmError) return { ok: false, message: error.message };
+    return { ok: false, message: "فشل إصدار الفاتورة — حاول مجددًا" };
   }
 
-  await syncSheets();
+  revalidateTag(CATALOG_TAG, { expire: 0 });
+  triggerSheetsSync();
   return { ok: true, message: "تم تأكيد الطلب وخصم المخزون وإصدار الفاتورة" };
+}
+
+class ConfirmError extends Error {}
+
+async function confirmOrderAtomic(orderId: string, invoiceNo: string): Promise<void> {
+  let attempt = 0;
+  for (;;) {
+    try {
+      await prisma.$transaction(
+        async (tx) => {
+          const order = await tx.order.findUnique({
+            where: { id: orderId },
+            include: { items: { include: { product: { include: { variants: true } } } } },
+          });
+          if (!order) throw new ConfirmError("الطلب غير موجود");
+          if (order.status !== OrderStatus.PENDING) {
+            throw new ConfirmError("لا يمكن تأكيد طلب ليس بانتظار التأكيد");
+          }
+
+          const wanted = new Map<string, number>();
+          const variantIndex = new Map<string, Variant>();
+          const productName = new Map<string, string>();
+          const productIds = new Set<string>();
+
+          for (const item of order.items) {
+            const p = item.product;
+            productName.set(p.id, p.name);
+            productIds.add(p.id);
+            if (p.stockPolicy === StockPolicy.MADE_TO_ORDER) continue;
+            for (const v of p.variants) variantIndex.set(`${v.productId}|${v.size}|${v.color}`, v);
+            const key = `${item.productId}|${item.size}|${item.color}`;
+            wanted.set(key, (wanted.get(key) ?? 0) + item.quantity);
+          }
+
+          if (wanted.size > 0) {
+            const aggs = await tx.orderItem.groupBy({
+              by: ["productId", "size", "color"],
+              where: {
+                order: { status: { in: SOLD } },
+                productId: { in: [...productIds] },
+              },
+              _sum: { quantity: true },
+            });
+            const confirmed = new Map<string, number>();
+            for (const agg of aggs) {
+              const key = `${agg.productId}|${agg.size}|${agg.color}`;
+              confirmed.set(key, (confirmed.get(key) ?? 0) + (agg._sum.quantity ?? 0));
+            }
+            for (const [key, qty] of wanted) {
+              const v = variantIndex.get(key);
+              if (!v) throw new ConfirmError("مقاس أو لون لم يعد موجودًا في هذا المنتج");
+              const have = v.stockQty - (confirmed.get(key) ?? 0);
+              if (have < qty) {
+                throw new ConfirmError(
+                  `المخزون لا يكفي: ${productName.get(v.productId) ?? ""} (${v.size}/${v.color}) — المتاح ${Math.max(0, have)}`
+                );
+              }
+            }
+          }
+
+          await tx.order.update({
+            where: { id: orderId },
+            data: { status: OrderStatus.CONFIRMED, confirmedAt: new Date() },
+          });
+          await tx.invoice.create({
+            data: { invoiceNo, orderId, amount: order.totalAmount },
+          });
+        },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          maxWait: 5000,
+          timeout: 15000,
+        }
+      );
+      return;
+    } catch (error) {
+      const code = (error as { code?: string })?.code;
+      const isSerialization = code === "P2034" || code === "40P01" || code === "40001";
+      if (isSerialization && attempt < 3) {
+        attempt++;
+        continue;
+      }
+      throw error;
+    }
+  }
 }
 
 export async function cancelOrder(orderId: string): Promise<{ ok: boolean; message: string }> {
@@ -198,9 +221,10 @@ export async function cancelOrder(orderId: string): Promise<{ ok: boolean; messa
   }
   await prisma.order.update({
     where: { id: orderId },
-    data: { status: OrderStatus.CANCELLED, paymentStatus: "REFUNDED" },
+    data: { status: OrderStatus.CANCELLED, paymentStatus: PaymentStatus.REFUNDED },
   });
-  await syncSheets();
+  revalidateTag(CATALOG_TAG, { expire: 0 });
+  triggerSheetsSync();
   return { ok: true, message: "تم الإلغاء — عاد المخزون للمصدر وانسحبت المبيعات" };
 }
 
@@ -232,10 +256,10 @@ export async function advanceOrderState(
     where: { id: orderId },
     data: {
       status: next,
-      paymentStatus: action === "markPaid" ? "PAID" : order.paymentStatus,
+      paymentStatus: action === "markPaid" ? PaymentStatus.PAID : order.paymentStatus,
     },
   });
-  await syncSheets();
+  triggerSheetsSync();
   return { ok: true, message: "تم تحديث حالة الطلب" };
 }
 
@@ -253,38 +277,69 @@ export async function createSiteOrder(input: SiteOrderInput): Promise<{
   orderNo?: string;
   whatsappUrl?: string;
 }> {
+  if (!input.customerName.trim() || input.customerName.trim().length > 60) {
+    return { ok: false, message: "أدخل اسم الزبون بحرف كحد أقصى 60" };
+  }
+  const phone = input.customerPhone.trim().replace(/\s+/g, "");
+  if (!/^\+?[0-9]{8,15}$/.test(phone)) {
+    return { ok: false, message: "رقم الجوال غير صحيح" };
+  }
+  if (input.notes && input.notes.length > 500) {
+    return { ok: false, message: "الملاحظات طويلة جدًا" };
+  }
+  const lines = input.lines;
+  if (lines.length === 0) return { ok: false, message: "لا توجد أصناف في الطلب" };
+  if (lines.length > 12) return { ok: false, message: "عدد الأصناف كبير جدًا — قسّم طلبك" };
+  for (const line of lines) {
+    if (!line.productId || line.productId.length > 64) {
+      return { ok: false, message: "أحد الأصناف غير صحيح" };
+    }
+    if (!line.size?.trim() || line.size.trim().length > 30) {
+      return { ok: false, message: "أحد المقاسات غير صحيح" };
+    }
+    if (line.color?.length > 30) {
+      return { ok: false, message: "أحد الألوان غير صحيح" };
+    }
+    if (!Number.isInteger(line.quantity) || line.quantity < 1 || line.quantity > 99) {
+      return { ok: false, message: "أحد الخانات بكمية غير صحيحة" };
+    }
+    if (line.printDetails && line.printDetails.length > 300) {
+      return { ok: false, message: "تفاصيل الطباعة طويلة جدًا" };
+    }
+  }
+  if (rateLimitHit(`order:${phone}`, SITE_ORDER_LIMIT)) {
+    return { ok: false, message: "طلبات كثيرة خلال فترة قصيرة — أعد المحاولة بعد قليل" };
+  }
+
   const created = await createOrderRecord({
     source: OrderSource.SITE,
     ...input,
+    customerPhone: phone,
   });
-  if (!created.ok || !created.orderNo) {
+  if (!created.ok || !created.orderId) {
     return { ok: false, message: created.message };
   }
 
-  const settings = await getSettings();
-  const products = await prisma.product.findMany({
-    where: { id: { in: input.lines.map((l) => l.productId) } },
+  const order = await prisma.order.findUnique({
+    where: { id: created.orderId },
+    include: { items: { include: { product: { select: { name: true, sku: true, stockPolicy: true } } } } },
   });
-  const productMap = new Map(products.map((p) => [p.id, p]));
-  const messageLines = input.lines.map((l) => {
-    const p = productMap.get(l.productId)!;
-    return {
-      name: p.name,
-      sku: p.sku,
-      size: l.size,
-      color: l.color,
-      quantity: l.quantity,
-      unitPrice: p.basePrice,
-      printDetails: l.printDetails,
-    };
-  });
+  const messageLines =
+    order?.items.map((it) => ({
+      name: it.product.name,
+      sku: it.product.sku,
+      size: it.size,
+      color: it.color,
+      quantity: it.quantity,
+      unitPrice: it.unitPrice,
+      printDetails: it.printDetails,
+    })) ?? [];
+  const hasMadeToOrder = order?.items.some((it) => it.product.stockPolicy === StockPolicy.MADE_TO_ORDER) ?? false;
 
   const { buildOrderMessage, buildWhatsAppLink } = await import("./whatsapp");
-  const hasMadeToOrder = products.some((p) => p.stockPolicy === "MADE_TO_ORDER");
+  const settings = await getSettings();
   const text = buildOrderMessage(
-    {
-      ...settings,
-    },
+    { ...settings },
     messageLines,
     { customerName: input.customerName || undefined, notes: input.notes || undefined, hasMadeToOrder }
   );
