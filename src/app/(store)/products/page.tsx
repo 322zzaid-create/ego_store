@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export default async function ProductsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ category?: string; recipe?: string; q?: string }>;
+  searchParams: Promise<{ category?: string; recipe?: string; q?: string; available?: string }>;
 }) {
   const params = await searchParams;
   const settings = await getSettings();
@@ -23,17 +23,30 @@ export default async function ProductsPage({
       ? (params.recipe as StockPolicy)
       : undefined;
   const q = params.q?.trim().slice(0, 100) || undefined;
+  const onlyAvailable = params.available === "1";
 
-  const products = await fetchCatalog({ category, policy, search: q });
+  const products = await fetchCatalog({
+    category,
+    policy,
+    search: q,
+    includeSoldOut: !onlyAvailable,
+  });
+
+  const isAll = !category && !policy && !onlyAvailable;
 
   const filterClass = (active: boolean) =>
-    `rounded-full px-4 py-1.5 text-sm font-bold transition-colors ${
-      active ? "bg-zinc-900 text-white" : "bg-white text-zinc-600 hover:bg-zinc-100"
+    `rounded-full px-4 py-2 text-sm font-bold transition-colors ${
+      active ? "bg-primary text-white shadow-sm" : "bg-white text-zinc-600 hover:bg-primary-soft hover:text-primary-strong"
     }`;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10">
-      <h1 className="text-2xl font-black">الكتالوج</h1>
+      <h1 className="flex items-center gap-2 text-2xl font-black text-zinc-900">
+        الكتالوج
+        <span className="rounded-full bg-primary-soft px-3 py-0.5 text-sm font-bold text-primary-strong">
+          {products.length}
+        </span>
+      </h1>
       <p className="mt-1 text-sm text-zinc-500">اختر قطعتك واطلبها عبر واتساب بضغطة واحدة</p>
 
       <div className="mt-6 space-y-3">
@@ -42,15 +55,15 @@ export default async function ProductsPage({
             name="q"
             defaultValue={q ?? ""}
             placeholder="ابحث بالاسم أو الرمز EGO-xxx..."
-            className="w-full max-w-sm rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none"
+            className="w-full max-w-sm rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
           />
-          <button className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-bold text-white hover:bg-zinc-700">
+          <button className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-bold text-white transition-colors hover:bg-zinc-700">
             بحث
           </button>
         </form>
 
         <div className="flex flex-wrap items-center gap-2">
-          <Link href="/products" className={filterClass(!category && !policy)}>
+          <Link href="/products" className={filterClass(isAll)}>
             الكل
           </Link>
           <Link href="/products?category=HOODIE" className={filterClass(category === "HOODIE")}>
@@ -63,21 +76,34 @@ export default async function ProductsPage({
           <Link href="/products?recipe=MADE_TO_ORDER" className={filterClass(policy === "MADE_TO_ORDER")}>
             طباعة عند الطلب
           </Link>
-          <Link href="/products" className={filterClass(category === undefined && policy === undefined)}>
+          <Link href="/products?available=1" className={filterClass(onlyAvailable && !category && !policy)}>
             المتوفر الآن
           </Link>
+          {onlyAvailable || q ? (
+            <Link
+              href="/products"
+              className="rounded-full px-3 py-2 text-sm font-bold text-zinc-400 transition-colors hover:text-zinc-600"
+            >
+              مسح الفلترة ✕
+            </Link>
+          ) : null}
         </div>
       </div>
 
       <div className="mt-8">
         {products.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-zinc-300 p-10 text-center text-zinc-500">
+          <p className="rounded-2xl border border-dashed border-zinc-300 p-10 text-center text-zinc-500">
             لا توجد منتجات مطابقة — جرّب فلترة أخرى
           </p>
         ) : (
           <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
             {products.map((p) => (
-              <ProductCard key={p.id} product={p} currency={settings.currency} currencyPosition={settings.currencyPosition} />
+              <ProductCard
+                key={p.id}
+                product={p}
+                settings={settings}
+                lowStockThreshold={settings.lowStockThreshold}
+              />
             ))}
           </div>
         )}

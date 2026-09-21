@@ -60,6 +60,18 @@ export function buildOrderMessage(
   return parts.join("\n");
 }
 
+export function buildQuickOrderMessage(
+  shopName: string,
+  name: string,
+  sku: string,
+  size: string,
+  color: string
+): string {
+  return `مرحبًا، من ${shopName}
+أرغب بطلب هذا المنتج فورًا:
+${name} (${sku}) — مقاس ${size} — لون ${color}`;
+}
+
 export function buildCustomPrintMessage(settings: AppSettings): string {
   return `مرحبًا، من ${settings.shopName}
 أريد طباعة فكرة خاصة بي:

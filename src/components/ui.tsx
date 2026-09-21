@@ -9,7 +9,7 @@ const buttonVariants: Record<ButtonVariant, string> = {
   ghost: "bg-transparent text-zinc-700 hover:bg-zinc-100",
   danger: "bg-rose-600 text-white hover:bg-rose-700",
   success: "bg-emerald-600 text-white hover:bg-emerald-700",
-  whatsapp: "bg-emerald-500 text-white hover:bg-emerald-600",
+  whatsapp: "bg-primary text-white hover:bg-primary-hover",
 };
 
 const buttonSizes: Record<ButtonSize, string> = {
@@ -32,7 +32,7 @@ export function Button({
   return (
     <button
       className={cn(
-        "inline-flex items-center justify-center gap-2 rounded-lg font-semibold transition-colors cursor-pointer",
+        "inline-flex items-center justify-center gap-2 rounded-xl font-semibold transition-colors cursor-pointer",
         buttonVariants[variant],
         buttonSizes[size],
         disabledStyles,
@@ -46,6 +46,7 @@ export function Button({
 const badgeVariants: Record<string, string> = {
   gray: "bg-zinc-100 text-zinc-700",
   emerald: "bg-emerald-100 text-emerald-800",
+  orange: "bg-primary-soft text-primary-strong",
   rose: "bg-rose-100 text-rose-800",
   amber: "bg-amber-100 text-amber-800",
   blue: "bg-blue-100 text-blue-800",

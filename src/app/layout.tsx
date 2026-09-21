@@ -20,7 +20,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ar" dir="rtl" className={cairo.variable}>
-      <body className="min-h-[100dvh] flex flex-col bg-zinc-50 text-zinc-950 antialiased">
+      <body className="flex min-h-[100dvh] flex-col bg-background text-foreground antialiased">
         {children}
       </body>
     </html>
